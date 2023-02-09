@@ -74,12 +74,12 @@ const authenticationToken = (request, response, next) => {
   }
   if (jwtToken === undefined) {
     response.status(401);
-    response.send("Invalid jwt Token");
+    response.send("Invalid JWT Token");
   } else {
     jwt.verify(jwtToken, "MY_TOKEN", async (error, payload) => {
       if (error) {
         response.status(401);
-        response.send("Invalid jwt Token");
+        response.send("Invalid JWT Token");
       } else {
         request.username = payload.username;
         next();
@@ -123,11 +123,12 @@ app.get("/user/following", authenticationToken, async (request, response) => {
   const getUserFollowing = `SELECT user.name FROM follower 
   LEFT JOIN user ON follower.following_user_id=user.user_id WHERE follower.follower_user_id=(SELECT user_id FROM user WHERE username='${username}');`;
   const following = await db.all(getUserFollowing);
+
   response.send(following);
 });
 
 //user follower
-app.get("/user/follower", authenticationToken, async (request, response) => {
+app.get("/user/followers", authenticationToken, async (request, response) => {
   const { username } = request;
   const getUserFollower = `SELECT user.name FROM follower 
     LEFT JOIN user ON follower.follower_user_id=user.user_id 
@@ -136,15 +137,15 @@ app.get("/user/follower", authenticationToken, async (request, response) => {
   response.send(follower);
 });
 
-const follow = (request, response, next) => {
+const follow = async (request, response, next) => {
   const { tweetId } = request.params;
   const { username } = request;
   const isFollowing = `SELECT * FROM follower WHERE 
        follower_user_id =(SELECT user_id FROM user WHERE username='${username}') AND
        following_user_id=(SELECT user.user_id FROM tweet NATURAL JOIN user WHERE tweet_id=${tweetId});`;
-  const followUser = db.get(isFollowing);
+  const followUser = await db.get(isFollowing);
   if (followUser === undefined) {
-    response.status(400);
+    response.status(401);
     response.send("Invalid Request");
   } else {
     next();
@@ -152,14 +153,112 @@ const follow = (request, response, next) => {
 };
 //tweet by respective tweet ID
 app.get(
-  "/tweet/:tweetId",
+  "/tweets/:tweetId",
   authenticationToken,
   follow,
   async (request, response) => {
     const { tweetId } = request.params;
     const { username } = request;
-    const tweetUser = `SELECT tweet,date_time,COUNT(like_id) AS likes,COUNT(reply_id) AS replies FROM tweet NATURAL JOIN like NATURAL JOIN reply WHERE tweet_id=${tweetId};`;
-    const tweet = await db.get(tweetUser);
-    response.send(tweet);
+    const tweetUser = `SELECT tweet,date_time FROM tweet WHERE tweet_id=${tweetId};`;
+    const likeUser = `SELECT COUNT(like_id) AS likes FROM like WHERE tweet_id=${tweetId};`;
+    const replyUser = `SELECT COUNT(reply_id) AS replies FROM reply WHERE tweet_id=${tweetId};`;
+    const userTweet = await db.get(tweetUser);
+    const { tweet, date_time } = userTweet;
+    const userLikes = await db.get(likeUser);
+    const { likes } = userLikes;
+    const userReplies = await db.get(replyUser);
+    const { replies } = userReplies;
+
+    response.send({
+      tweet,
+
+      likes,
+      replies,
+      dateTime: userTweet.date_time,
+    });
   }
 );
+
+//tweet of tweetId LIKES
+app.get(
+  "/tweets/:tweetId/likes",
+  authenticationToken,
+  follow,
+  async (request, response) => {
+    const { tweetId } = request.params;
+    const { username } = request;
+    const likedName = `SELECT user.username FROM like NATURAL JOIN user WHERE tweet_id=${tweetId};`;
+    const names = await db.all(likedName);
+
+    response.send({ likes: names.map((item) => item.username) });
+  }
+);
+
+//get all the tweet by the logged user
+app.get("/user/tweets/", authenticationToken, async (request, response) => {
+  const { username } = request;
+  const myTweet = `SELECT tweet.tweet,COUNT(distinct like.like_id) AS likes,
+    COUNT(distinct reply.reply_id) AS replies,tweet.date_time FROM tweet 
+    LEFT JOIN like ON tweet.tweet_id=like.tweet_id
+    LEFT JOIN reply ON tweet.tweet_id=reply.tweet_id
+    WHERE tweet.user_id=(SELECT user_id FROM user WHERE username='${username}')
+    GROUP BY tweet.tweet_id;`;
+  const userReply = await db.all(myTweet);
+  response.send(
+    userReply.map((item) => {
+      const { date_time, ...rest } = item;
+      return {
+        ...rest,
+        dateTime: date_time,
+      };
+    })
+  );
+});
+
+//post a tweet by the logged in user
+app.get(
+  "/tweets/:tweetId/replies/",
+  authenticationToken,
+  follow,
+  async (request, response) => {
+    const { tweetId } = request.params;
+    const userReply = `SELECT user.name,reply.reply FROM reply NATURAL JOIN user WHERE tweet_id=${tweetId};`;
+    const replies = await db.all(userReply);
+    response.send({ replies });
+  }
+);
+
+//post a tweet by logged in user
+app.post("/user/tweets/", authenticationToken, async (request, response) => {
+  const { tweet } = request.body;
+  const { username } = request;
+  const getUser = `SELECT user_id FROM user WHERE username='${username}';`;
+  const user = await db.get(getUser);
+  const { user_id } = user;
+  const addUser = `INSERT INTO tweet (tweet,user_id)
+    VALUES ('${tweet}',${user_id});`;
+  await db.run(addUser);
+  response.send("Created a Tweet");
+});
+// delete a tweet
+app.delete(
+  "/tweets/:tweetId/",
+  authenticationToken,
+  async (request, response) => {
+    const { tweetId } = request.params;
+    const { username } = request;
+    const userTweet = `SELECT tweet_id,user_id FROM tweet WHERE tweet_id=${tweetId} AND user_id=(SELECT user_id FROM user WHERE username='${username}');`;
+    const tweetResult = await db.get(userTweet);
+    // console.log(tweetResult);
+    if (tweetResult === undefined) {
+      response.status(401);
+      response.send("Invalid Request");
+    } else {
+      const deleteTweet = `DELETE FROM tweet WHERE tweet_id=${tweetId};`;
+      await db.run(deleteTweet);
+      response.send("Tweet Removed");
+    }
+  }
+);
+
+module.exports = app;
