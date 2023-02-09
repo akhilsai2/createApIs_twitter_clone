@@ -140,8 +140,8 @@ const follow = (request, response, next) => {
   const { tweetId } = request.params;
   const { username } = request;
   const isFollowing = `SELECT * FROM follower WHERE 
-       follower.user_id =(SELECT user_id FROM user WHERE username='${username}') AND
-       following.user_id=(SELECT user.user_id FROM tweet NATURAL JOIN user WHERE tweet_id=${tweetId});`;
+       follower_user_id =(SELECT user_id FROM user WHERE username='${username}') AND
+       following_user_id=(SELECT user.user_id FROM tweet NATURAL JOIN user WHERE tweet_id=${tweetId});`;
   const followUser = db.get(isFollowing);
   if (followUser === undefined) {
     response.status(400);
@@ -157,5 +157,9 @@ app.get(
   follow,
   async (request, response) => {
     const { tweetId } = request.params;
+    const { username } = request;
+    const tweetUser = `SELECT tweet,date_time,COUNT(like_id) AS likes,COUNT(reply_id) AS replies FROM tweet NATURAL JOIN like NATURAL JOIN reply WHERE tweet_id=${tweetId};`;
+    const tweet = await db.get(tweetUser);
+    response.send(tweet);
   }
 );
